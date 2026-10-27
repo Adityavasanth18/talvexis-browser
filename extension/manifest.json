@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Talvexis Browser",
+  "version": "0.1.0",
+  "description": "Talvexis Browser Chrome extension for multimodal browser automation",
+  "author": "OpenBrowser Team",
+  "icons": {
+    "16": "assets/icon16.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Talvexis Browser - Browser UUID"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "tabs",
+    "windows",
+    "tabGroups",
+    "activeTab",
+    "scripting",
+    "debugger",
+    "storage",
+    "alarms"
+  ],
+  "externally_connectable": {
+    "matches": ["http://localhost:*/*", "http://127.0.0.1:*/*"]
+  },
+  "web_accessible_resources": [
+    {
+      "matches": ["<all_urls>"],
+      "resources": ["assets/*", "workers/*", "uuid/*"]
+    }
+  ]
+}

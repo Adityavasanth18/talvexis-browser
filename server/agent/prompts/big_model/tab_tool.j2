@@ -1,0 +1,113 @@
+# Tab Tool
+
+Manage browser tabs for the current conversation and establish the active page state.
+
+## Core Contract
+
+- `tab init` - Returns a clean screenshot of the loaded page with the virtual cursor visible.
+- `tab open` - Returns a clean screenshot of the opened tab with the virtual cursor visible.
+- `tab switch` - Returns a clean screenshot of the switched-to tab with the virtual cursor visible.
+- `tab refresh` - Returns a clean screenshot of the refreshed page with the virtual cursor visible.
+- `tab back` - Returns a clean screenshot after navigating back with the virtual cursor visible.
+- `tab forward` - Returns a clean screenshot after navigating forward with the virtual cursor visible.
+- `tab list` - Returns tab list only.
+- `tab close` - Returns close result only.
+- `tab view` - Returns a clean screenshot of the current tab with the virtual cursor visible.
+- Keep work in one active tab unless opening or switching tabs clearly improves the task.
+- After navigation, use the returned observation first. If a likely target is already visible but clipped or cramped, scroll to recenter it before clicking.
+
+## Commands
+
+### tab init
+Initialize a new browser session with its managed tab group.
+
+```json
+{ "action": "init", "url": "https://example.com" }
+```
+
+Start a task on a URL and get a screenshot of the loaded page.
+
+### tab open
+Open a new tab in the current session and switch to it.
+
+```json
+{ "action": "open", "url": "https://example.com" }
+```
+
+Use this only when a new tab is clearly better than staying in the current one.
+
+### tab close
+Close a specific tab.
+
+```json
+{ "action": "close", "tab_id": 123 }
+```
+
+Returns success/failure only; no screenshot.
+
+### tab switch
+Switch to a specific tab in the session.
+
+```json
+{ "action": "switch", "tab_id": 123 }
+```
+
+### tab list
+List all tabs in the current session.
+
+```json
+{ "action": "list" }
+```
+
+Returns tab metadata only; no screenshot.
+
+### tab refresh
+Refresh the current active tab.
+
+```json
+{ "action": "refresh", "tab_id": 123 }
+```
+
+### tab view
+Get a fresh clean screenshot of the current active tab without performing any action.
+
+```json
+{ "action": "view" }
+```
+
+Use this when you want a current-state snapshot without moving the cursor or clicking.
+
+### tab back
+Navigate back in the browser history (equivalent to clicking the browser's back button).
+
+```json
+{ "action": "back" }
+```
+
+### tab forward
+Navigate forward in the browser history.
+
+```json
+{ "action": "forward" }
+```
+
+## Workflow Integration
+
+1. **Start session**: `tab init https://example.com`
+2. **Navigate to other pages**: `tab open https://other.com`
+3. **Switch between tabs**: `tab switch` with the appropriate `tab_id`.
+4. These tab actions already return a clean screenshot of the new page state with the virtual cursor visible, so you can act on it directly with `mouse` and `keyboard`.
+5. If the target is already partly visible after navigation, scroll to recenter it before clicking.
+6. If the target is not visible on the current view, scroll or navigate to find it; do not click coordinates outside the viewport.
+
+## Notes
+
+- **Tab IDs**: Integer identifiers assigned by Chrome. These are returned in tab list responses and used in other commands.
+- **Auto-resolution**: `mouse` and `keyboard` actions automatically use the conversation's active tab.
+- **Session persistence**: Tabs for a conversation stay grouped together until explicitly closed or the browser restarts.
+
+## Error Handling
+
+- **No active tab**: If a conversation has no open tabs, commands requiring an active tab will fail.
+- **Invalid tab_id**: Using a tab_id from another conversation will fail.
+- **URL load failures**: Screenshots will show error pages or loading indicators.

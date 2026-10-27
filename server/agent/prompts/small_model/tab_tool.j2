@@ -1,0 +1,77 @@
+# Tab Tool
+
+Manage tabs for the current conversation.
+
+## Primary Rules
+
+1. Keep the workflow in one active tab unless a new tab is clearly necessary.
+2. After navigation, look at the returned screenshot before the next action.
+3. All `tab` actions return a clean screenshot of the new page state with the virtual cursor visible — act on it directly with `mouse` and `keyboard`.
+4. If the target is already partly visible after navigation, scroll to recenter it before clicking.
+5. If the target is not visible at all, scroll or navigate; do not click coordinates outside the viewport.
+
+## Commands
+
+### tab init
+Start a session on a URL.
+
+```json
+{ "action": "init", "url": "https://example.com" }
+```
+
+### tab open
+Open a new tab only when needed.
+
+```json
+{ "action": "open", "url": "https://example.com" }
+```
+
+### tab switch
+Switch to a known `tab_id`.
+
+```json
+{ "action": "switch", "tab_id": 123 }
+```
+
+### tab list
+List tabs when you need to know available `tab_id`s.
+
+```json
+{ "action": "list" }
+```
+
+### tab view
+Get a fresh screenshot of the active tab without acting.
+
+```json
+{ "action": "view" }
+```
+
+### tab refresh
+Reload the active tab.
+
+```json
+{ "action": "refresh", "tab_id": 123 }
+```
+
+### tab back / tab forward
+Use browser history when you need to return instead of reopening pages.
+
+```json
+{ "action": "back" }
+{ "action": "forward" }
+```
+
+### tab close
+Close an unused tab.
+
+```json
+{ "action": "close", "tab_id": 123 }
+```
+
+## Recommended Flow
+
+- Start with `tab init`.
+- After init, the returned screenshot is your working state — use `mouse` and `keyboard` to act on it.
+- If you need a fresh screenshot without acting, use `tab view`.
+- If the target is partly visible or clipped, scroll to recenter it before clicking.

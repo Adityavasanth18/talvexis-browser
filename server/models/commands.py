@@ -1,0 +1,903 @@
+from enum import Enum
+from typing import Optional, List, Tuple, Literal, Union
+from pydantic import BaseModel, Field, validator, model_validator
+import re
+
+URL_WITH_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
+
+
+class MouseButton(str, Enum):
+    LEFT = "left"
+    RIGHT = "right"
+    MIDDLE = "middle"
+
+
+class ScrollDirection(str, Enum):
+    UP = "up"
+    DOWN = "down"
+    LEFT = "left"
+    RIGHT = "right"
+
+
+class TabAction(str, Enum):
+    OPEN = "open"
+    CLOSE = "close"
+    LIST = "list"
+    SWITCH = "switch"
+    INIT = "init"
+    REFRESH = "refresh"
+    VIEW = "view"
+    BACK = "back"
+    FORWARD = "forward"
+
+
+class BaseCommand(BaseModel):
+    """Base command model with common fields"""
+
+    command_id: Optional[str] = Field(
+        default=None,
+        description="Optional unique identifier for tracking command execution",
+    )
+    timestamp: Optional[float] = Field(
+        default=None, description="Timestamp when command was created (epoch seconds)"
+    )
+    tab_id: Optional[int] = Field(
+        default=None, description="Tab ID to target (None = current managed tab)"
+    )
+    conversation_id: Optional[str] = Field(
+        default=None,
+        description="Conversation ID for session isolation (None = default session)",
+    )
+    browser_id: Optional[str] = Field(
+        default=None,
+        description="Browser UUID capability token for targeted routing",
+    )
+    # When True, the extension returns a clean (no-highlight) screenshot with
+    # the virtual cursor rendered, instead of a highlighted screenshot. Set by
+    # BrowserExecutor for live-agent-path conversations; False for routine
+    # replay (which still depends on the highlight + element-id inventory).
+    live_mode: bool = Field(
+        default=False,
+        description=(
+            "If True, the extension skips highlight injection and returns a "
+            "clean screenshot with the virtual cursor for the live pixel-only "
+            "agent path. Default False preserves the legacy highlight flow."
+        ),
+    )
+
+
+class MouseMoveCommand(BaseCommand):
+    """Move mouse to an absolute CSS-pixel position in the live viewport.
+
+    Coordinates are CSS pixels (post-denormalization). The extension clamps
+    out-of-range values to the live viewport before dispatch, so no upper
+    bound is enforced here — server-side denormalization is the single source
+    of truth on coordinate space.
+    """
+
+    type: Literal["mouse_move"] = "mouse_move"
+    x: int = Field(
+        description="X coordinate in CSS pixels from viewport left.",
+        ge=0,
+    )
+    y: int = Field(
+        description="Y coordinate in CSS pixels from viewport top.",
+        ge=0,
+    )
+    duration: Optional[float] = Field(
+        default=0.1,
+        description="Duration of movement in seconds (for animation)",
+        gt=0,
+        le=5.0,
+    )
+
+
+class MouseClickCommand(BaseCommand):
+    """Click at the current cursor position, or at an explicit (x, y).
+
+    When ``x`` and ``y`` are provided, the extension first dispatches a
+    ``mouseMoved`` to that position so the click registers there; when omitted,
+    the click fires at the most recent cursor position tracked per tab.
+    """
+
+    type: Literal["mouse_click"] = "mouse_click"
+    button: MouseButton = Field(default=MouseButton.LEFT)
+    double: bool = Field(default=False, description="Double click if True")
+    count: int = Field(default=1, ge=1, le=3, description="Number of clicks (1-3)")
+    x: Optional[int] = Field(
+        default=None,
+        description="Optional X in CSS pixels — pre-move cursor before clicking.",
+        ge=0,
+    )
+    y: Optional[int] = Field(
+        default=None,
+        description="Optional Y in CSS pixels — pre-move cursor before clicking.",
+        ge=0,
+    )
+
+
+class MouseDragCommand(BaseCommand):
+    """Drag from (start_x, start_y) to (end_x, end_y) in CSS pixels.
+
+    Sequence: mouseMoved → mousePressed → N lerped mouseMoved → mouseReleased.
+    """
+
+    type: Literal["mouse_drag"] = "mouse_drag"
+    start_x: int = Field(description="Drag start X in CSS pixels.", ge=0)
+    start_y: int = Field(description="Drag start Y in CSS pixels.", ge=0)
+    end_x: int = Field(description="Drag end X in CSS pixels.", ge=0)
+    end_y: int = Field(description="Drag end Y in CSS pixels.", ge=0)
+    button: MouseButton = Field(default=MouseButton.LEFT)
+    steps: int = Field(
+        default=10,
+        ge=2,
+        le=40,
+        description="Intermediate mouseMoved events between start and end.",
+    )
+
+
+class MouseScrollCommand(BaseCommand):
+    """Scroll at current mouse position. Internal wire type — `amount` is
+    in CSS pixels here, but the agent never sees this field directly; the
+    agent's `mouse.scroll` tool takes a normalized [0, 1000] amount and
+    the server denormalizes before constructing this command. The upper
+    bound is intentionally permissive so denormalization on tall viewports
+    (4K, vertical monitors) never overflows back into a validation error
+    that would leak pixel numbers into agent observations."""
+
+    type: Literal["mouse_scroll"] = "mouse_scroll"
+    direction: ScrollDirection = Field(default=ScrollDirection.DOWN)
+    amount: int = Field(default=100, ge=1, le=20000)
+
+
+class ResetMouseCommand(BaseCommand):
+    """Reset mouse position to screen center"""
+
+    type: Literal["reset_mouse"] = "reset_mouse"
+
+
+class KeyboardTypeCommand(BaseCommand):
+    """Type text at current focus"""
+
+    type: Literal["keyboard_type"] = "keyboard_type"
+    text: str = Field(description="Text to type", max_length=1000)
+
+    @validator("text")
+    def validate_text(cls, v):
+        # Remove control characters except newline, tab
+        v = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", v)
+        return v
+
+
+class KeyboardPressCommand(BaseCommand):
+    """Press special key"""
+
+    type: Literal["keyboard_press"] = "keyboard_press"
+    key: str = Field(
+        description="Key to press (e.g., 'Enter', 'Escape', 'Tab', 'Backspace')",
+        max_length=50,
+    )
+    modifiers: List[str] = Field(
+        default_factory=list, description="Modifier keys (e.g., ['Control', 'Shift'])"
+    )
+
+
+class KeyboardClearCommand(BaseCommand):
+    """Clear the currently focused input/textarea/contenteditable.
+
+    Implemented in the extension as a JS-based reset on `document.activeElement`
+    (set value/textContent empty + dispatch input/change), not a keyboard
+    shortcut — Ctrl+A select-all is unreliable on macOS where Cmd is the
+    select-all modifier, so the keyboard path leaves stale text behind.
+    """
+
+    type: Literal["keyboard_clear"] = "keyboard_clear"
+
+
+class SelectOptionCommand(BaseCommand):
+    """Choose option(s) on a `<select>` previously focused by `mouse_click`.
+
+    The agent's preceding `mouse_click` lands on a native `<select>`, the
+    extension intercepts it (the OS-level dropdown does not render into
+    screenshots) and marks the element. This command operates on that
+    pending mark — no element_id required.
+
+    `values` is matched against options in this order: exact `value`
+    attribute → exact visible label → case-insensitive substring of label.
+    Pass a list with multiple entries for `<select multiple>`.
+    """
+
+    type: Literal["select_option"] = "select_option"
+    values: List[str] = Field(
+        description=(
+            "Option(s) to select on the most recently clicked native `<select>`. "
+            "Pass a single-entry list for a normal dropdown, or multiple entries "
+            "for `<select multiple>`."
+        ),
+        min_length=1,
+        max_length=50,
+    )
+
+
+class UploadFilePendingCommand(BaseCommand):
+    """Attach file(s) to the `<input type=file>` previously focused by `mouse_click`.
+
+    Bypasses the native OS file picker via CDP `DOM.setFileInputFiles`.
+    Paths must be absolute and exist on the host running Chrome (same
+    machine as the server in the v1 setup).
+    """
+
+    type: Literal["upload_file_pending"] = "upload_file_pending"
+    paths: List[str] = Field(
+        description=(
+            "Absolute file paths to attach to the most recently clicked file "
+            "input. Single-entry list for a normal upload, multiple entries "
+            "for `<input type=file multiple>`."
+        ),
+        min_length=1,
+        max_length=20,
+    )
+
+
+class ScreenshotCommand(BaseCommand):
+    """Capture screenshot"""
+
+    type: Literal["screenshot"] = "screenshot"
+    include_cursor: bool = Field(
+        default=True, description="Whether to include mouse cursor in screenshot"
+    )
+    include_visual_mouse: bool = Field(
+        default=True,
+        description="Whether to include visual mouse pointer in screenshot",
+    )
+    quality: int = Field(
+        default=90,  # 保持与扩展一致，PNG忽略此参数，JPEG使用
+        ge=1,
+        le=100,
+        description="JPEG quality (1-100), PNG format ignores this parameter",
+    )
+
+
+class TabCommand(BaseCommand):
+    """Tab management command"""
+
+    type: Literal["tab"] = "tab"
+    action: TabAction
+    url: Optional[str] = Field(
+        default=None, description="URL for open action, tab ID for close/switch"
+    )
+
+    @validator("url")
+    def validate_url(cls, v, values):
+        action = values.get("action")
+        if action in [TabAction.OPEN, TabAction.INIT]:
+            # Add a default scheme only when the caller did not provide one.
+            if v and not URL_WITH_SCHEME_RE.match(v):
+                v = f"https://{v}"
+        return v
+
+    @model_validator(mode="after")
+    def validate_navigation_action_requirements(self):
+        if self.action in [TabAction.OPEN, TabAction.INIT] and not self.url:
+            raise ValueError(f"URL is required for {self.action} action")
+        return self
+
+
+class GetTabsCommand(BaseCommand):
+    """Get list of all tabs"""
+
+    type: Literal["get_tabs"] = "get_tabs"
+    managed_only: bool = Field(
+        default=True,
+        description="If true, only return managed tabs (in OpenBrowser tab group)",
+    )
+
+
+class JavascriptExecuteCommand(BaseCommand):
+    """Execute JavaScript code in browser tab"""
+
+    type: Literal["javascript_execute"] = "javascript_execute"
+    script: str = Field(description="JavaScript code to execute")
+    return_by_value: bool = Field(
+        default=True, description="If true, returns result as serializable JSON value"
+    )
+    await_promise: bool = Field(
+        default=False, description="If true, waits for Promise resolution"
+    )
+    timeout: int = Field(
+        default=30000,
+        ge=100,
+        le=120000,
+        description="Execution timeout in milliseconds (100-120000)",
+    )
+
+
+class DialogAction(str, Enum):
+    """Dialog handling action"""
+
+    ACCEPT = "accept"
+    DISMISS = "dismiss"
+
+
+class RecordingControlAction(str, Enum):
+    """Recording control action."""
+
+    START = "start"
+    STOP = "stop"
+
+
+class RecordingLaunchMode(str, Enum):
+    """How a recording session should allocate browser workspace."""
+
+    DEDICATED_WINDOW = "dedicated_window"
+    CURRENT_WINDOW = "current_window"
+
+
+class HandleDialogCommand(BaseCommand):
+    """Handle an open JavaScript dialog (confirm/prompt)"""
+
+    type: Literal["handle_dialog"] = "handle_dialog"
+    action: DialogAction = Field(description="Action to take: 'accept' or 'dismiss'")
+    prompt_text: Optional[str] = Field(
+        default=None, description="Text to enter for prompt dialogs"
+    )
+
+
+class GetGroundedElementsCommand(BaseCommand):
+    """Extract interactive elements with selectors and bounding boxes for visual grounding"""
+
+    type: Literal["get_grounded_elements"] = "get_grounded_elements"
+    max_elements: int = Field(
+        default=100,
+        ge=1,
+        le=500,
+        description="Maximum number of elements to return (1-500, default 100)",
+    )
+    include_hidden: bool = Field(
+        default=False,
+        description="If true, include hidden/disabled elements (default false)",
+    )
+
+
+class GetAccessibilityTreeCommand(BaseCommand):
+    """Get accessibility tree from the page for AI agent context"""
+
+    type: Literal["get_accessibility_tree"] = "get_accessibility_tree"
+    max_elements: Optional[int] = Field(
+        default=50,
+        ge=1,
+        le=500,
+        description="Maximum number of elements to return (1-500, default 50)",
+    )
+
+
+# Legacy element-id commands (HighlightElementsCommand through HighlightDropPreviewCommand):
+# kept for /ob-routines recording/replay. The live agent uses pixel-level commands
+# (MouseMoveCommand, MouseClickCommand, etc.) and never references element_id.
+class HighlightElementsCommand(BaseCommand):
+    """Highlight interactive elements on the page for visual selection
+
+    Uses collision-aware pagination to ensure no overlapping highlights.
+    Each page returns a maximal set of non-colliding elements.
+    Only one element type per call for stable, predictable pagination.
+
+    When keywords is provided, use exact observed text or stable tokens only.
+    Matching elements are returned without pagination.
+    """
+
+    type: Literal["highlight_elements"] = "highlight_elements"
+    element_type: Optional[str] = Field(
+        default="any",
+        description="Single element type to highlight for agent-visible guidance: 'any', 'scrollable', 'inputable', 'selectable', 'draggable', 'droppable', or 'uploadable'",
+    )
+    page: Optional[int] = Field(
+        default=1,
+        ge=1,
+        description="Page number for collision-aware pagination (1-indexed). Ignored when keywords is provided.",
+    )
+    keywords: Optional[List[str]] = Field(
+        default=None,
+        description="Exact observed text or stable tokens to filter by detected semantic text (visible text, labels, roles, and stable element tokens). Use only for wording already seen in the screenshot or returned HTML. When provided, only matching elements are returned (no pagination). Example: ['Continue with Email', 'View comments']",
+    )
+
+
+class ClickElementCommand(BaseCommand):
+    """Click a highlighted element by its ID
+
+    tab_id is optional and will be auto-resolved to the current managed tab if not provided.
+    """
+
+    type: Literal["click_element"] = "click_element"
+    element_id: str = Field(description="Element ID from highlight response")
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, auto-resolved if not provided)",
+    )
+
+
+class HoverElementCommand(BaseCommand):
+    """Hover over a highlighted element by its ID
+
+    tab_id is optional and will be auto-resolved to the current managed tab if not provided.
+    """
+
+    type: Literal["hover_element"] = "hover_element"
+    element_id: str = Field(description="Element ID from highlight response")
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, auto-resolved if not provided)",
+    )
+
+
+class ScrollElementCommand(BaseCommand):
+    """Scroll a highlighted element in a direction, or the entire page if element_id not provided
+
+    tab_id is optional and will be auto-resolved to the current managed tab if not provided.
+    """
+
+    type: Literal["scroll_element"] = "scroll_element"
+    element_id: Optional[str] = Field(
+        default=None,
+        description="Element ID from highlight response. If not provided, scrolls the entire page",
+    )
+    direction: str = Field(
+        default="down", description="Scroll direction: 'up', 'down', 'left', 'right'"
+    )
+    scroll_amount: float = Field(
+        default=0.5,
+        ge=0.1,
+        le=3.0,
+        description=(
+            "Scroll amount relative to the current scroll target's visible size "
+            "(0.5 = half of the current target, 1.0 = one full visible span, "
+            "2.0 = two spans). Without element_id the target is the page; with "
+            "a scrollable element_id the target is that element's container."
+        ),
+    )
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, auto-resolved if not provided)",
+    )
+
+
+class SwipeElementCommand(BaseCommand):
+    """Swipe a highlighted element in a direction, typically for carousel/swiper regions.
+
+    Swipe directions are semantic content directions: next/prev refer to the next
+    or previous visible item, not the finger movement direction.
+    tab_id is optional and will be auto-resolved to the current managed tab if not provided.
+    """
+
+    type: Literal["swipe_element"] = "swipe_element"
+    element_id: str = Field(description="Element ID from highlight response")
+    direction: Literal["next", "prev"] = Field(
+        default="next",
+        description=(
+            "Semantic swipe direction for carousel/swiper regions: 'next' shows "
+            "the next picture/item and 'prev' shows the previous picture/item. "
+            "Do not reinterpret swipe as left/right gesture direction."
+        ),
+    )
+    swipe_count: int = Field(
+        default=1,
+        ge=1,
+        le=5,
+        description="Number of swipe steps to perform (1-5)",
+    )
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, auto-resolved if not provided)",
+    )
+
+
+class KeyboardInputCommand(BaseCommand):
+    """Type text into a highlighted element by its ID
+
+    tab_id is optional and will be auto-resolved to the current managed tab if not provided.
+    """
+
+    type: Literal["keyboard_input"] = "keyboard_input"
+    element_id: str = Field(description="Element ID from highlight response")
+    text: str = Field(description="Text to input into the element")
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, auto-resolved if not provided)",
+    )
+
+
+class SelectElementCommand(BaseCommand):
+    """Select an option in a <select> element by its value.
+
+    For multi-select (<select multiple>), pass a list of values.
+    tab_id is optional and will be auto-resolved to the current managed tab if not provided.
+    """
+
+    type: Literal["select_element"] = "select_element"
+    element_id: str = Field(description="Element ID from highlight response")
+    value: Union[str, List[str]] = Field(
+        description=(
+            "The option to select. Match order: (1) the option's `value` "
+            "attribute exactly, (2) the option's visible label exactly, "
+            "(3) case-insensitive substring of the visible label. Prefer "
+            "the `value` attribute — it is what the recorder captures from "
+            "<select> change events. If unsure, run `highlight` with "
+            "element_type=selectable first; the response renders every "
+            'option as `"value"="label"` inside an indented `options:` block '
+            "under the select's descriptor line. "
+            "Pass a string for single select, a list for multi-select."
+        )
+    )
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, auto-resolved if not provided)",
+    )
+
+
+class GetElementHtmlCommand(BaseCommand):
+    """Get the full HTML of a cached element by its ID from extension's elementCache"""
+
+    type: Literal["get_element_html"] = "get_element_html"
+    element_id: str = Field(description="Element ID from highlight response")
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, uses active tab if not provided)",
+    )
+
+
+class DragAndDropElementCommand(BaseCommand):
+    """Drag a source element to either a target element or a relative pixel offset.
+
+    Exactly one of `target_element_id` or (`offset_x`, `offset_y`) must be provided.
+    tab_id is optional and will be auto-resolved to the current managed tab if not provided.
+    """
+
+    type: Literal["drag_and_drop_element"] = "drag_and_drop_element"
+    element_id: str = Field(description="Source element ID from highlight response")
+    target_element_id: Optional[str] = Field(
+        default=None,
+        description="Target element ID to drop onto. Mutually exclusive with offset_x/offset_y.",
+    )
+    position: Optional[str] = Field(
+        default=None,
+        description="Where to place relative to target: 'before' or 'after'. Only with target_element_id.",
+    )
+    offset_x: Optional[float] = Field(
+        default=None,
+        description="Horizontal pixel offset (positive = right) from the source center. Use with offset_y instead of target_element_id.",
+    )
+    offset_y: Optional[float] = Field(
+        default=None,
+        description="Vertical pixel offset (positive = down) from the source center. Use with offset_x instead of target_element_id.",
+    )
+    steps: int = Field(
+        default=10,
+        ge=2,
+        le=40,
+        description="Number of intermediate mousemove steps between source and target (2-40). More steps help DnD libraries register the gesture.",
+    )
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, auto-resolved if not provided)",
+    )
+
+
+class UploadFileCommand(BaseCommand):
+    """Attach a file to an <input type="file"> element via CDP.
+
+    Bypasses the native OS file picker by calling DOM.setFileInputFiles
+    directly against the file input node. The browser must be able to
+    read file_path on its local filesystem, so for v1 the server and
+    Chrome must run on the same host.
+
+    tab_id is optional and will be auto-resolved to the current managed tab if not provided.
+    """
+
+    type: Literal["upload_file"] = "upload_file"
+    element_id: str = Field(description="Element ID of an uploadable <input type=file>")
+    file_path: str = Field(
+        description="Absolute path to the file to upload. Must exist on the host running the browser."
+    )
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, auto-resolved if not provided)",
+    )
+
+
+class SetSliderValueCommand(BaseCommand):
+    """Set the value of a native <input type=range> slider directly.
+
+    Bypasses pixel-precision dragging by writing the element's value and dispatching
+    `input` and `change` events. For non-native (custom) sliders, use drag_and_drop_element.
+    """
+
+    type: Literal["set_slider_value"] = "set_slider_value"
+    element_id: str = Field(description="Element ID of the <input type=range>")
+    value: Union[float, str] = Field(
+        description=(
+            "Target value. Either an absolute numeric value within the slider's "
+            "[min, max] range, or a string like '50%' interpreted as a percentage "
+            "between min and max."
+        )
+    )
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, auto-resolved if not provided)",
+    )
+
+
+class HighlightSingleElementCommand(BaseCommand):
+    """Highlight a single element with visual confirmation for 2PC flow"""
+
+    type: Literal["highlight_single_element"] = "highlight_single_element"
+    element_id: str = Field(description="Element ID from highlight response")
+    intended_action: Optional[Literal["click", "keyboard_input", "select"]] = Field(
+        default=None,
+        description="Optional action name to render in the confirmation reminder banner",
+    )
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, uses active tab if not provided)",
+    )
+
+
+class AnalyzePixelTargetsCommand(BaseCommand):
+    """Probe the live viewport at a CSS-pixel coordinate to find what
+    interactable element (if any) lies under the point and which other
+    interactables sit within `radius` of it.
+
+    The extension reuses the highlight-detection engine and returns:
+      - hit: smallest interactable whose bbox contains (x, y), or None
+      - neighborhood: top-N interactables within `radius` CSS pixels of
+        the point, sorted by distance
+      - verdict: 'sparse' if neighborhood has 0–1 elements, 'dense' if 2+
+
+    The server uses the verdict to gate pixel mouse_click / mouse_drag:
+    only dense neighborhoods receive a confirmation preview round-trip.
+    """
+
+    type: Literal["analyze_pixel_targets"] = "analyze_pixel_targets"
+    x: int = Field(description="Click X in CSS pixels (viewport coord)")
+    y: int = Field(description="Click Y in CSS pixels (viewport coord)")
+    radius: int = Field(
+        default=30,
+        description="Neighborhood radius in CSS pixels around (x, y).",
+        ge=0,
+    )
+    candidate_limit: int = Field(
+        default=5,
+        description="Max number of nearby candidates to return.",
+        ge=1,
+        le=20,
+    )
+
+
+class RenderPixelConfirmCommand(BaseCommand):
+    """Produce a zoomed confirmation screenshot for a pending pixel action.
+
+    Two modes:
+      - 'pixel_hit': the click landed on `target_selector`; render a YELLOW
+        box around it and zoom-crop centered on the element.
+      - 'pixel_miss': the click landed in whitespace; render a red crosshair
+        at (x, y) plus thin grey outlines on `candidate_bboxes`. Zoom-crop
+        centered on the click point.
+
+    Returns a screenshot data URL only — server already holds the
+    structured candidate list from the prior analyze_pixel_targets call.
+    """
+
+    type: Literal["render_pixel_confirm"] = "render_pixel_confirm"
+    mode: Literal["pixel_hit", "pixel_miss"] = Field(
+        description="Visual mode: pixel_hit (yellow box) or pixel_miss (crosshair)."
+    )
+    x: int = Field(description="Click X in CSS pixels (viewport coord)")
+    y: int = Field(description="Click Y in CSS pixels (viewport coord)")
+    target_bbox: Optional[dict] = Field(
+        default=None,
+        description=(
+            "Bbox of the hit element {x, y, width, height} in CSS pixels. "
+            "Required for pixel_hit; ignored for pixel_miss."
+        ),
+    )
+    candidate_bboxes: Optional[List[dict]] = Field(
+        default=None,
+        description=(
+            "Bbox dicts {x, y, width, height} in CSS pixels for outlines "
+            "(used by pixel_miss)."
+        ),
+    )
+    target_selector: Optional[str] = Field(
+        default=None,
+        description=(
+            "CSS selector for the hit element. When provided, the extension "
+            "draws a yellow outline directly on the live page DOM in "
+            "addition to the canvas overlay."
+        ),
+    )
+    candidate_selectors: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "CSS selectors for nearby candidate elements. When provided, the "
+            "extension draws orange dashed outlines directly on the live "
+            "page DOM."
+        ),
+    )
+    banner_kind: Optional[Literal["click", "drag"]] = Field(
+        default=None,
+        description=(
+            "Banner kind for the in-page confirmation prompt — 'click' "
+            "renders 'Is this the element you wanted to click?', 'drag' "
+            "renders the drag equivalent. Omit to skip the banner."
+        ),
+    )
+    drag_end: Optional[dict] = Field(
+        default=None,
+        description=(
+            "Optional {x, y} CSS-pixel point to draw an arrow toward (for "
+            "drag-endpoint previews)."
+        ),
+    )
+
+
+class ClearPixelOverlayCommand(BaseCommand):
+    """Remove any pixel-confirmation overlay currently drawn on the page.
+
+    Sent before a new mouse action begins so a stale yellow/orange overlay
+    from the previous turn does not linger across actions.
+    """
+
+    type: Literal["clear_pixel_overlay"] = "clear_pixel_overlay"
+
+
+class HighlightDropPreviewCommand(BaseCommand):
+    """Highlight inner elements of a drop container for drag-and-drop 2PC flow.
+
+    Sent when drag_and_drop targets a container element. The extension crops
+    the screenshot to the container and highlights its inner draggable children
+    so the agent can choose a precise drop position.
+    """
+
+    type: Literal["highlight_drop_preview"] = "highlight_drop_preview"
+    source_element_id: str = Field(
+        description="Source element ID (the element being dragged)"
+    )
+    target_element_id: str = Field(
+        description="Target container element ID (the drop zone)"
+    )
+    tab_id: Optional[int] = Field(
+        default=None,
+        description="Target tab ID (optional, uses active tab if not provided)",
+    )
+
+
+class RecordingControlCommand(BaseCommand):
+    """Start or stop browser recording mode."""
+
+    type: Literal["recording_control"] = "recording_control"
+    action: RecordingControlAction = Field(
+        description="Recording action to perform: 'start' or 'stop'"
+    )
+    recording_id: str = Field(description="Recording session ID")
+    launch_mode: Optional[RecordingLaunchMode] = Field(
+        default=None,
+        description=(
+            "Optional recording workspace strategy for start actions. "
+            "'dedicated_window' opens a fresh browser window, while "
+            "'current_window' scopes recording to the focused window."
+        ),
+    )
+
+
+class CommandResponse(BaseModel):
+    """Response from command execution"""
+
+    success: bool
+    command_id: Optional[str] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+    data: Optional[dict] = None
+    timestamp: float = Field(default_factory=lambda: time.time())
+
+
+class ScreenshotResponse(CommandResponse):
+    """Response for screenshot command"""
+
+    data: Optional[dict] = Field(
+        default=None, description="Screenshot data including image base64"
+    )
+
+
+class TabsResponse(CommandResponse):
+    """Response for get tabs command"""
+
+    data: Optional[dict] = Field(default=None, description="Tab list data")
+
+
+# Union type for all possible commands
+Command = Union[
+    MouseMoveCommand,
+    MouseClickCommand,
+    MouseDragCommand,
+    MouseScrollCommand,
+    ResetMouseCommand,
+    KeyboardTypeCommand,
+    KeyboardPressCommand,
+    KeyboardClearCommand,
+    SelectOptionCommand,
+    UploadFilePendingCommand,
+    ScreenshotCommand,
+    TabCommand,
+    GetTabsCommand,
+    JavascriptExecuteCommand,
+    HandleDialogCommand,
+    GetGroundedElementsCommand,
+    GetAccessibilityTreeCommand,
+    HighlightElementsCommand,
+    ClickElementCommand,
+    HoverElementCommand,
+    ScrollElementCommand,
+    SwipeElementCommand,
+    KeyboardInputCommand,
+    SelectElementCommand,
+    GetElementHtmlCommand | HighlightSingleElementCommand,
+    HighlightDropPreviewCommand,
+    AnalyzePixelTargetsCommand,
+    RenderPixelConfirmCommand,
+    ClearPixelOverlayCommand,
+    RecordingControlCommand,
+    DragAndDropElementCommand,
+    SetSliderValueCommand,
+    UploadFileCommand,
+]
+
+
+# Helper function to parse command from dict
+def parse_command(data: dict) -> Command:
+    """Parse command from dictionary based on type field"""
+    cmd_type = data.get("type")
+    if not cmd_type:
+        raise ValueError("Command must have 'type' field")
+
+    command_map = {
+        "mouse_move": MouseMoveCommand,
+        "mouse_click": MouseClickCommand,
+        "mouse_drag": MouseDragCommand,
+        "mouse_scroll": MouseScrollCommand,
+        "reset_mouse": ResetMouseCommand,
+        "keyboard_type": KeyboardTypeCommand,
+        "keyboard_press": KeyboardPressCommand,
+        "keyboard_clear": KeyboardClearCommand,
+        "select_option": SelectOptionCommand,
+        "upload_file_pending": UploadFilePendingCommand,
+        "screenshot": ScreenshotCommand,
+        "tab": TabCommand,
+        "get_tabs": GetTabsCommand,
+        "javascript_execute": JavascriptExecuteCommand,
+        "handle_dialog": HandleDialogCommand,
+        "get_grounded_elements": GetGroundedElementsCommand,
+        "get_accessibility_tree": GetAccessibilityTreeCommand,
+        "highlight_elements": HighlightElementsCommand,
+        "click_element": ClickElementCommand,
+        "hover_element": HoverElementCommand,
+        "scroll_element": ScrollElementCommand,
+        "swipe_element": SwipeElementCommand,
+        "keyboard_input": KeyboardInputCommand,
+        "select_element": SelectElementCommand,
+        "get_element_html": GetElementHtmlCommand,
+        "highlight_single_element": HighlightSingleElementCommand,
+        "highlight_drop_preview": HighlightDropPreviewCommand,
+        "analyze_pixel_targets": AnalyzePixelTargetsCommand,
+        "render_pixel_confirm": RenderPixelConfirmCommand,
+        "clear_pixel_overlay": ClearPixelOverlayCommand,
+        "recording_control": RecordingControlCommand,
+        "drag_and_drop_element": DragAndDropElementCommand,
+        "set_slider_value": SetSliderValueCommand,
+        "upload_file": UploadFileCommand,
+    }
+
+    if cmd_type not in command_map:
+        raise ValueError(f"Unknown command type: {cmd_type}")
+
+    return command_map[cmd_type](**data)
+
+
+import time  # Import at end to avoid circular import in default_factory

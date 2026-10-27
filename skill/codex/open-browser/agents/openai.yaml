@@ -1,0 +1,4 @@
+interface:
+  display_name: "Talvexis Browser"
+  short_description: "Use local Talvexis Browser for web automation"
+  default_prompt: "Use $open-browser to operate a real Chrome browser through the local Talvexis Browser service in foreground mode by default so live SSE output is visible in the current terminal."

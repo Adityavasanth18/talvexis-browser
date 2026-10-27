@@ -1,0 +1,59 @@
+# Keyboard Tool
+
+Type text and press keys at the current focus.
+
+## Focus an input first
+
+Keyboard events go to whatever element currently has focus. Before typing into a text field, search box, contenteditable, etc., **`move` the cursor over the field and `click` it to focus it.** Then call this tool. The same applies after navigating to a new page or opening a dialog — re-focus the input by clicking it before the next `type`.
+
+## Actions
+
+### type
+Type literal text into the focused field.
+
+```json
+{ "action": "type", "text": "hello world" }
+```
+
+`type` does not interpret special characters — newlines and tabs are inserted literally. For Enter / Tab / shortcuts, use `press`.
+
+### press
+Press a single named key, optionally with modifiers.
+
+```json
+{ "action": "press", "key": "Enter" }
+{ "action": "press", "key": "Escape" }
+{ "action": "press", "key": "Tab" }
+{ "action": "press", "key": "Backspace" }
+{ "action": "press", "key": "Delete" }
+{ "action": "press", "key": "ArrowDown" }
+{ "action": "press", "key": "a", "modifiers": ["Control"] }
+{ "action": "press", "key": "Tab", "modifiers": ["Shift"] }
+```
+
+Common keys: `Enter`, `Escape`, `Tab`, `Backspace`, `Delete`, `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`, `PageUp`, `PageDown`, `Home`, `End`, single letters/digits.
+
+Modifiers: `Control`, `Shift`, `Alt`, `Meta` (Cmd on macOS).
+
+On macOS, use `Meta` for command shortcuts: `Meta+a` selects all, `Meta+c`/`v`/`x` are copy/paste/cut, `Meta+z` is undo, `Meta+f` opens find. If you pass `Control` with one of these shortcut keys (`a`, `c`, `v`, `x`, `z`, `y`, `s`, `f`, `g`, `p`, `n`, `t`, `w`, `r`, `l`), the server translates it to `Meta` and the observation reports the actual press. Set `literal: true` on the action to send the exact `Control` combination without translation — useful when you need the literal `Control` binding (e.g. Emacs-style cursor moves).
+
+### clear
+Empty the currently focused field. Works on `<input>`, `<textarea>`, and contenteditable widgets (Gmail search, rich editors). The result reports whether the field actually ended up empty — if it didn't, click into the field first and try again.
+
+```json
+{ "action": "clear" }
+```
+
+## Patterns
+
+- **Fill an empty form field**: `mouse move` to the field → `mouse click` → `keyboard type`.
+- **Replace existing text**: `mouse move` to the field → `mouse click` → `keyboard clear` → `keyboard type`.
+- **Submit a form / trigger search**: `keyboard press` `key: "Enter"` after typing.
+- **Erase a single character**: `keyboard press` `key: "Backspace"`.
+- **Tab to next field**: `keyboard press` `key: "Tab"`.
+
+## Notes
+
+- One action per turn.
+- Click an input area before typing into it so it has focus.
+- For URL changes use the `tab` tool to navigate, not the keyboard.

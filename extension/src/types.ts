@@ -1,0 +1,538 @@
+export type MouseButton = 'left' | 'right' | 'middle';
+export type ScrollDirection = 'up' | 'down' | 'left' | 'right';
+export type TabAction =
+  | 'open'
+  | 'close'
+  | 'switch'
+  | 'list'
+  | 'init'
+  | 'refresh'
+  | 'view'
+  | 'back'
+  | 'forward';
+export type DialogType = 'alert' | 'confirm' | 'prompt' | 'beforeunload';
+export type DialogAction = 'accept' | 'dismiss';
+export type RecordingControlAction = 'start' | 'stop';
+export type RecordingLaunchMode = 'dedicated_window' | 'current_window';
+
+export interface BaseCommand {
+  type: string;
+  command_id?: string;
+  timestamp?: number;
+  tab_id?: number;
+  conversation_id?: string; // For multi-session support
+  // When true, the live agent path is active: skip highlight injection and
+  // return a clean screenshot with the virtual cursor. Default false keeps
+  // routine-replay's highlight + element-id behavior.
+  live_mode?: boolean;
+}
+
+export interface MouseMoveCommand extends BaseCommand {
+  type: 'mouse_move';
+  x: number;
+  y: number;
+  duration?: number;
+}
+
+export interface MouseClickCommand extends BaseCommand {
+  type: 'mouse_click';
+  button?: MouseButton;
+  double?: boolean;
+  count?: number;
+  // Optional CSS-pixel target. When provided, the extension pre-moves the
+  // cursor to (x, y) before dispatching the click. When omitted, the click
+  // fires at the cursor's current position.
+  x?: number;
+  y?: number;
+}
+
+export interface MouseDragCommand extends BaseCommand {
+  type: 'mouse_drag';
+  start_x: number;
+  start_y: number;
+  end_x: number;
+  end_y: number;
+  button?: MouseButton;
+  steps?: number;
+}
+
+export interface MouseScrollCommand extends BaseCommand {
+  type: 'mouse_scroll';
+  direction: ScrollDirection;
+  amount: number;
+}
+
+export interface ResetMouseCommand extends BaseCommand {
+  type: 'reset_mouse';
+}
+
+export interface KeyboardTypeCommand extends BaseCommand {
+  type: 'keyboard_type';
+  text: string;
+}
+
+export interface KeyboardPressCommand extends BaseCommand {
+  type: 'keyboard_press';
+  key: string;
+  modifiers?: string[];
+}
+
+export interface KeyboardClearCommand extends BaseCommand {
+  type: 'keyboard_clear';
+}
+
+export interface SelectOptionCommand extends BaseCommand {
+  type: 'select_option';
+  values: string[];
+}
+
+export interface UploadFilePendingCommand extends BaseCommand {
+  type: 'upload_file_pending';
+  paths: string[];
+}
+
+export interface ScreenshotCommand extends BaseCommand {
+  type: 'screenshot';
+  tab_id?: number;
+  include_cursor?: boolean;
+  quality?: number;
+  include_visual_mouse?: boolean;
+}
+
+export interface TabCommand extends BaseCommand {
+  type: 'tab';
+  action: TabAction;
+  url?: string;
+  tab_id?: number;
+}
+
+export interface GetTabsCommand extends BaseCommand {
+  type: 'get_tabs';
+  managed_only?: boolean;
+}
+
+export interface JavascriptExecuteCommand extends BaseCommand {
+  type: 'javascript_execute';
+  script: string;
+  return_by_value?: boolean;
+  await_promise?: boolean;
+  timeout?: number;
+}
+
+export interface CleanupSessionCommand extends BaseCommand {
+  type: 'cleanup_session';
+  conversation_id: string;
+}
+
+export interface HandleDialogCommand extends BaseCommand {
+  type: 'handle_dialog';
+  action: DialogAction; // 'accept' or 'dismiss'
+  prompt_text?: string; // Required for prompt dialogs
+}
+
+export interface GroundedElement {
+  id: number;
+  type: string;
+  text: string;
+  selector: string;
+  bbox: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  attributes?: Record<string, any>;
+}
+
+export interface GetGroundedElementsCommand extends BaseCommand {
+  type: 'get_grounded_elements';
+  max_elements?: number;
+  include_hidden?: boolean;
+}
+
+export interface GetAccessibilityTreeCommand extends BaseCommand {
+  type: 'get_accessibility_tree';
+  max_elements?: number;
+}
+
+// Visual interaction commands
+export interface HighlightElementsCommand extends BaseCommand {
+  type: 'highlight_elements';
+  element_type?: ElementType; // Single element type for stable pagination
+  page?: number; // 1-indexed page number for collision-aware pagination
+  keywords?: string[]; // Keywords list to filter elements by detected semantic text (no pagination needed when provided)
+}
+
+export interface ClickElementCommand extends BaseCommand {
+  type: 'click_element';
+  /** Element ID from highlight response (short opaque string) */
+  element_id: string;
+  /**
+   * Target tab ID (optional - auto-resolved from conversation if not provided)
+   * Note: Required in Python models, but optional here as extension auto-resolves it
+   */
+  tab_id?: number;
+}
+
+export interface HoverElementCommand extends BaseCommand {
+  type: 'hover_element';
+  /** Element ID from highlight response (short opaque string) */
+  element_id: string;
+  /**
+   * Target tab ID (optional - auto-resolved from conversation if not provided)
+   * Note: Required in Python models, but optional here as extension auto-resolves it
+   */
+  tab_id?: number;
+}
+
+export interface ScrollElementCommand extends BaseCommand {
+  type: 'scroll_element';
+  /** Element ID from highlight response (short opaque string). If not provided, scrolls the entire page */
+  element_id?: string;
+  direction?: ScrollDirection;
+  /** Scroll amount relative to the current scroll target's visible size (0.5 = half target, 1.0 = one full visible span) */
+  scroll_amount?: number;
+  /**
+   * Target tab ID (optional - auto-resolved from conversation if not provided)
+   * Note: Required in Python models, but optional here as extension auto-resolves it
+   */
+  tab_id?: number;
+}
+
+export type SwipeDirection = 'next' | 'prev';
+
+export interface SwipeElementCommand extends BaseCommand {
+  type: 'swipe_element';
+  /** Element ID from highlight response (short opaque string) */
+  element_id: string;
+  direction?: SwipeDirection;
+  /** Number of swipe steps for carousel/swiper interactions */
+  swipe_count?: number;
+  /**
+   * Target tab ID (optional - auto-resolved from conversation if not provided)
+   * Note: Required in Python models, but optional here as extension auto-resolves it
+   */
+  tab_id?: number;
+}
+
+export interface KeyboardInputCommand extends BaseCommand {
+  type: 'keyboard_input';
+  /** Element ID from highlight response (short opaque string) */
+  element_id: string;
+  text: string;
+  /**
+   * Target tab ID (optional - auto-resolved from conversation if not provided)
+   * Note: Required in Python models, but optional here as extension auto-resolves it
+   */
+  tab_id?: number;
+}
+
+export interface SelectElementCommand extends BaseCommand {
+  type: 'select_element';
+  /** Element ID from highlight response (short opaque string) */
+  element_id: string;
+  /** Option value(s) to select. Use string for single select, array for multi-select (<select multiple>) */
+  value: string | string[];
+  /**
+   * Target tab ID (optional - auto-resolved from conversation if not provided)
+   * Note: Required in Python models, but optional here as extension auto-resolves it
+   */
+  tab_id?: number;
+}
+
+export interface DragAndDropElementCommand extends BaseCommand {
+  type: 'drag_and_drop_element';
+  /** Source element ID from highlight response (short opaque string) */
+  element_id: string;
+  /** Optional target element ID. Mutually exclusive with offset_x/offset_y. */
+  target_element_id?: string;
+  /** Where to place relative to target: 'before' (above/left) or 'after' (below/right). Only with target_element_id. */
+  position?: 'before' | 'after';
+  /** Horizontal pixel offset from source center (positive = right) */
+  offset_x?: number;
+  /** Vertical pixel offset from source center (positive = down) */
+  offset_y?: number;
+  /** Number of intermediate mousemove steps (2-40) */
+  steps?: number;
+  /** Target tab ID (optional - auto-resolved if not provided) */
+  tab_id?: number;
+}
+
+export interface SetSliderValueCommand extends BaseCommand {
+  type: 'set_slider_value';
+  /** Element ID of the <input type=range> */
+  element_id: string;
+  /** Numeric value or percentage string like '75%' */
+  value: number | string;
+  /** Target tab ID (optional - auto-resolved if not provided) */
+  tab_id?: number;
+}
+
+export interface UploadFileCommand extends BaseCommand {
+  type: 'upload_file';
+  /** Element ID of the <input type="file"> from highlight response */
+  element_id: string;
+  /**
+   * Absolute path to the file on the host running the browser. The server
+   * validates existence and readability before dispatching to the extension.
+   */
+  file_path: string;
+  /** Target tab ID (optional - auto-resolved if not provided) */
+  tab_id?: number;
+}
+
+export interface GetElementHtmlCommand extends BaseCommand {
+  type: 'get_element_html';
+  element_id: string;
+  tab_id?: number; // Optional: uses active tab if not provided
+}
+
+export interface HighlightSingleElementCommand extends BaseCommand {
+  type: 'highlight_single_element';
+  element_id: string;
+  intended_action?: 'click' | 'keyboard_input' | 'select';
+  tab_id?: number; // Optional: uses active tab if not provided
+}
+
+export interface HighlightDropPreviewCommand extends BaseCommand {
+  type: 'highlight_drop_preview';
+  /** Source element ID (the element being dragged) */
+  source_element_id: string;
+  /** Target container element ID (the drop zone) */
+  target_element_id: string;
+  tab_id?: number;
+}
+
+export interface AnalyzePixelTargetsCommand extends BaseCommand {
+  type: 'analyze_pixel_targets';
+  /** Click X in CSS pixels (viewport coord). */
+  x: number;
+  /** Click Y in CSS pixels (viewport coord). */
+  y: number;
+  /** Neighborhood radius in CSS pixels around (x, y). Default 30. */
+  radius?: number;
+  /** Max number of nearby candidates to return. Default 5. */
+  candidate_limit?: number;
+}
+
+export interface RenderPixelConfirmCommand extends BaseCommand {
+  type: 'render_pixel_confirm';
+  /** Visual mode for the preview crop. */
+  mode: 'pixel_hit' | 'pixel_miss';
+  /** Click X in CSS pixels. */
+  x: number;
+  /** Click Y in CSS pixels. */
+  y: number;
+  /** Bbox of the hit element in CSS pixels (required for pixel_hit). */
+  target_bbox?: { x: number; y: number; width: number; height: number };
+  /** Bboxes for nearby candidate outlines (used by pixel_miss). */
+  candidate_bboxes?: { x: number; y: number; width: number; height: number }[];
+  /** CSS selector for the hit element (drives in-page DOM overlay). */
+  target_selector?: string;
+  /** CSS selectors for nearby candidates (drive in-page DOM overlay). */
+  candidate_selectors?: string[];
+  /** Banner kind for the in-page confirmation prompt. */
+  banner_kind?: 'click' | 'drag';
+  /** Optional drag end-point in CSS pixels (renders an arrow). */
+  drag_end?: { x: number; y: number };
+}
+
+export interface ClearPixelOverlayCommand extends BaseCommand {
+  type: 'clear_pixel_overlay';
+}
+
+export interface RecordingControlCommand extends BaseCommand {
+  type: 'recording_control';
+  action: RecordingControlAction;
+  recording_id: string;
+  launch_mode?: RecordingLaunchMode;
+}
+
+export interface GroundedElementsResponse {
+  success: boolean;
+  data?: {
+    elements: GroundedElement[];
+    pageInfo: {
+      url: string;
+      title: string;
+      totalInteractive: number;
+    };
+  };
+  error?: string;
+  timestamp: number;
+}
+
+export type Command =
+  | MouseMoveCommand
+  | MouseClickCommand
+  | MouseDragCommand
+  | MouseScrollCommand
+  | ResetMouseCommand
+  | KeyboardTypeCommand
+  | KeyboardPressCommand
+  | KeyboardClearCommand
+  | SelectOptionCommand
+  | UploadFilePendingCommand
+  | ScreenshotCommand
+  | TabCommand
+  | GetTabsCommand
+  | JavascriptExecuteCommand
+  | CleanupSessionCommand
+  | HandleDialogCommand
+  | GetGroundedElementsCommand
+  | GetAccessibilityTreeCommand
+  // Visual interaction commands
+  | HighlightElementsCommand
+  | ClickElementCommand
+  | HoverElementCommand
+  | ScrollElementCommand
+  | SwipeElementCommand
+  | KeyboardInputCommand
+  | SelectElementCommand
+  | DragAndDropElementCommand
+  | SetSliderValueCommand
+  | UploadFileCommand
+  | GetElementHtmlCommand
+  | HighlightSingleElementCommand
+  | HighlightDropPreviewCommand
+  | AnalyzePixelTargetsCommand
+  | RenderPixelConfirmCommand
+  | ClearPixelOverlayCommand
+  | RecordingControlCommand;
+
+export interface CommandResponse {
+  success: boolean;
+  command_id?: string;
+  message?: string;
+  error?: string;
+  data?: any;
+  timestamp: number;
+  duration?: number;
+  // Dialog-related fields
+  dialog_opened?: boolean;
+  dialog?: {
+    type: DialogType;
+    message: string;
+    url?: string;
+    needsDecision: boolean;
+  };
+  // Tab creation tracking
+  new_tabs_created?: Array<{
+    tabId: number;
+    url: string;
+    title?: string;
+    loading?: boolean;
+  }>;
+}
+
+export interface ScreenshotMetadata {
+  imageWidth: number;
+  imageHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  timestamp: number;
+  tabId: number;
+}
+
+export interface WebSocketMessage {
+  type: string;
+  [key: string]: any;
+}
+
+// Visual interaction types
+export type ElementType =
+  | 'clickable'
+  | 'scrollable'
+  | 'inputable'
+  | 'selectable'
+  | 'draggable'
+  | 'droppable'
+  | 'uploadable'
+  | 'any';
+
+export type InteractionHint =
+  | 'swipable'
+  | 'draggable'
+  | 'droppable'
+  | 'slidable';
+
+export interface ElementDescriptorOption {
+  value: string;
+  label: string;
+  selected?: boolean;
+  disabled?: boolean;
+  group?: string;
+}
+
+export interface ElementDescriptor {
+  tag: string;
+  role?: string;
+  name?: string;
+  text?: string;
+  context?: string;
+  inputType?: string;
+  placeholder?: string;
+  value?: string;
+  checked?: boolean;
+  multiple?: boolean;
+  options?: ElementDescriptorOption[];
+  href?: string;
+  disabled?: boolean;
+  expanded?: boolean;
+  selected?: boolean;
+  classHint?: string[]; // Up to 3 semantic class tokens, populated only when text/name are both empty.
+  icon?: string; // Icon hint (svg use xlink:href, img alt) when text/name are both empty.
+}
+
+export interface InteractiveElement {
+  id: string; // Element ID: short opaque visual-safe string for the current highlighted document (e.g. "A1H", "Q7M", "X4Y")
+  type: ElementType; // Type of interactive element
+  interactionHints?: InteractionHint[]; // Extra interaction hints (e.g. swipable carousel region)
+  tagName: string; // HTML tag name
+  selector: string; // CSS selector to find element
+  overlaySelector?: string; // Optional: selector of a visible anchor element used only for overlay rendering (used for hidden <input type=file> anchored on a label/button)
+  html?: string; // Optional: full HTML of the element (captured at highlight time). Used internally for identity/fingerprint/search; not forwarded to the server LLM payload.
+  descriptor?: ElementDescriptor; // Structured, compact element summary used by the server-side formatter.
+  text?: string; // Visible text content
+  searchText?: string; // Normalized semantic search text used by keyword filtering
+  fingerprint?: string; // Stable-ish identity fingerprint used to detect stale snapshot matches
+  bbox: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  isVisible: boolean; // Is element visible
+  isInViewport: boolean; // Is element in viewport
+  labelPosition?: 'above' | 'below'; // Vertical edge the label attaches to
+  labelXOffset?: number; // Horizontal shift (px) from bbox.x, clamped within element's x-range
+}
+
+export interface HighlightOptions {
+  elementType?: ElementType; // Single type to highlight (for stable pagination)
+  page?: number; // 1-indexed page number for collision-aware pagination
+  scale?: number; // Device pixel ratio for coordinate scaling
+  keywords?: string[]; // Keywords list to filter elements by detected semantic text (no pagination needed when provided)
+}
+
+export interface ElementActionResult {
+  success: boolean;
+  elementId?: string | undefined; // Made optional to support page-level operations (where no element_id is provided)
+  requestedElementId?: string;
+  resolvedElementId?: string;
+  elementIdCorrected?: boolean;
+  screenshotDataUrl?: string;
+  dialogOpened?: boolean;
+  dialog?: {
+    type: 'alert' | 'confirm' | 'prompt' | 'beforeunload';
+    message: string;
+    defaultValue?: string;
+  };
+  // Tab creation tracking
+  new_tabs_created?: Array<{
+    tabId: number;
+    url: string;
+    title?: string;
+    loading?: boolean;
+  }>;
+}

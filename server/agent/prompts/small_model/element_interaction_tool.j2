@@ -1,0 +1,132 @@
+# Element Interaction Tool
+
+Use one `element_id` from the current interactive observation to act on the page.
+
+## Primary Workflow
+
+1. Treat the current observation as the working inventory for the current page state.
+2. If a likely target is already partly visible, clipped by the viewport edge, or crowded by sticky UI, scroll first to reposition it.
+3. If it already contains the right `element_id`, act on it directly.
+4. If not, call `highlight` to paginate or narrow by `element_type`.
+5. `click`, `keyboard_input`, `select`, and `drag_and_drop` each produce a preview and require the matching `confirm_*`.
+6. Successful direct actions and completed `confirm_*` actions return the default `highlight` `element_type: "any"` page 1 screenshot for the new page state.
+7. If you need a clean screenshot without overlays, use `tab view`.
+
+## Core Rules
+
+- Never skip from intent directly to action without a matching `element_id` from the current interactive observation.
+- If page 1 missed the target on the same unchanged page state and no likely candidate is already partly visible, continue `element_type: "any"` pagination with the next `page` value.
+- If dense UI, a sidebar, a tab strip, or collision-aware label placement may have split the target across pages, keep paginating the same relevant mode before switching strategies.
+- If an action says the document changed or the cached element is stale, call `highlight` again before retrying.
+- If the page changed significantly and you already have the new default observation, use its new `element_id`s.
+- If the page changed significantly and you do not yet have the new observation, rebuild inventory before acting again.
+- Narrow to `inputable`, `scrollable`, or `selectable` only when the task directly targets that affordance and `any` was not enough.
+- `element_id` labels use a visual-safe uppercase alphabet. Lowercase letters never appear, and confusable characters such as `0`, `o`, `I`, `l`, `B/8`, `S/5`, `Z/2`, and `G/6` are excluded. Copy the label exactly as shown.
+
+## Commands
+
+### click
+
+```json
+{ "action": "click", "element_id": "A1H", "tab_id": 123 }
+{ "action": "confirm_click" }
+```
+
+### keyboard_input
+
+```json
+{ "action": "keyboard_input", "element_id": "Q2R", "text": "hello@example.com", "tab_id": 123 }
+{ "action": "confirm_keyboard_input" }
+```
+
+If the target is `inputable`, always `click` it first and complete that confirmation before `keyboard_input`.
+
+### hover
+
+```json
+{ "action": "hover", "element_id": "K9Q", "tab_id": 123 }
+```
+
+### select
+
+```json
+{ "action": "select", "element_id": "M8P", "value": "option1", "tab_id": 123 }
+{ "action": "confirm_select" }
+```
+
+The preview message echoes the chosen `value`. Verify it matches the option you intended (compare against the `<option>` list in the HTML) before confirming.
+
+### scroll
+
+`scroll_amount` is relative to the current scroll target's visible size.
+- No `element_id`: page viewport.
+- Scrollable `element_id`: that element's own visible container.
+- `0.5` = half of the current scroll target, `1.0` = one full visible span.
+- If the element is not actually scrollable, scrolling may fall back to the page.
+
+```json
+{ "action": "scroll", "direction": "down", "scroll_amount": 1.0, "tab_id": 123 }
+{ "action": "scroll", "element_id": "Y4M", "direction": "down", "tab_id": 123 }
+```
+
+### swipe
+
+```json
+{ "action": "swipe", "element_id": "Y4M", "direction": "next", "swipe_count": 1, "tab_id": 123 }
+```
+
+`direction: "next"` means show the next picture or next carousel item.
+`direction: "prev"` means show the previous picture or previous carousel item.
+These are content directions, not hand or finger movement directions. Do not reinterpret swipe as `left` or `right`.
+
+### drag_and_drop
+
+```json
+{ "action": "drag_and_drop", "element_id": "A1H", "target_element_id": "B2K", "tab_id": 123 }
+{ "action": "confirm_drag_and_drop" }
+{ "action": "confirm_drag_and_drop", "relative_to": "C3F", "position": "before" }
+```
+
+Use this for drag-and-drop cards, reorderable lists, or sortable items. Returns a zoomed preview of the container with inner elements; use `confirm_drag_and_drop` to drop at end or with `relative_to`/`position` for precise placement.
+
+### upload_file
+
+```json
+{ "action": "upload_file", "element_id": "F7K", "file_path": "/tmp/resume.pdf", "tab_id": 123 }
+```
+
+Use on elements with the `uploadable` hint (file inputs). `file_path` must be an absolute path on the host. Bypasses the native file picker — do not `click` the input first.
+
+### set_slider
+
+```json
+{ "action": "set_slider", "element_id": "V3K", "value": "75%", "tab_id": 123 }
+{ "action": "set_slider", "element_id": "V3K", "value": 50, "tab_id": 123 }
+```
+
+Use this for any element with the `slidable` hint — native `<input type=range>`, ARIA `role="slider"`, or custom progress bars. `value` is a number in `[min, max]` or a percentage string. For custom progress bars, always use percentage strings (e.g. `"30%"`). Do not click or drag the thumb manually.
+
+## Decision Rules
+
+- For buttons and links, use `click`
+- For text boxes, always `click` first, then use `keyboard_input`
+- For native `<select>`, use `select`
+- For sliders (any element with `slidable` hint, including video progress bars), use `set_slider`
+- For kanban cards, reorderable lists, or sortable items, use `drag_and_drop`
+- For hidden menus or tooltips, use `hover`
+- If the page or target region is scrollable and your goal is to reveal more content, use `scroll`
+- If the likely target is already visible but poorly positioned, use `scroll` before more highlight pagination or before clicking.
+- For carousel / gallery / swiper regions marked `swipable`, use `swipe`
+- For elements marked `uploadable` (file inputs), use `upload_file` with an absolute `file_path`
+- If a returned element is marked `draggable`, prefer `drag_and_drop` over `click`. To find valid drop targets, use `highlight element_type: "droppable"`.
+- If a target region is marked `scrollable` or `swipable`, do not replace that affordance with guessed navigation buttons or guessed controls first
+
+## Confirmation Rules
+
+- `click`, `keyboard_input`, `select`, and `drag_and_drop` require confirmation
+- `confirm_click`, `confirm_keyboard_input`, `confirm_select`, and `confirm_drag_and_drop` operate on the current pending confirmation; do not repeat `element_id`, `text`, or `value`
+- If the YELLOW preview appears, confirm only when the box position and reminder text or other explicit preview cues match your target
+- For `confirm_select`, also verify that the echoed `value` matches the exact option you intended
+- For `confirm_drag_and_drop`, review the inner elements in the container preview; use `relative_to` and `position` for precise placement, or omit to drop at end
+- The confirmation preview itself does not invalidate the chosen `element_id`
+- If the preview does not match, the page changed, or the target went stale, do not confirm; rebuild inventory and choose again

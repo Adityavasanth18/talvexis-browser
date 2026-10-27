@@ -1,0 +1,75 @@
+{
+  "compile_evaluation": {
+    "timestamp": "2026-04-25 14:54:04",
+    "unix_timestamp": 1777100044.99177,
+    "summary": {
+      "fixture_count": 3,
+      "judged_count": 3,
+      "passed_count": 2,
+      "pass_rate": 66.67,
+      "compile_model": "qwen35plus-fast",
+      "judge_model": "qwen36plus-fast",
+      "mean_intent_match": 0.9333,
+      "mean_keyword_placement": 1.0,
+      "mean_asking_behavior": 0.8333,
+      "total_proxy_cost": 0.10594,
+      "total_proxy_tokens": 21900
+    },
+    "fixture_results": {
+      "finviz_filter_clear": {
+        "success": true,
+        "final_status": "review",
+        "error": null,
+        "asked_questions_count": 1,
+        "compile_duration": 144.13,
+        "proxy_cost": 0.033144,
+        "proxy_tokens": 6632,
+        "overall_pass": true,
+        "intent_match": 0.9,
+        "keyword_placement": 1.0,
+        "asking_behavior": 1.0,
+        "reasoning": {
+          "intent_match": "The routine faithfully reproduces all 5 filter settings across both tabs, switches to Performance view, sorts by Perf Month, and clicks the top 3 rows as intended. The only minor deviation is Step 12 (summarize results), which adds an action not present in the user's recorded trace. Additionally, the Keywords for steps 9-11 use the specific tickers UISA, SHXD, NRGB even though the user wanted generic \"top rows\" behavior — though the step descriptions correctly say \"first/second/third row\" so execution is fine, the keywords are slightly misleading.",
+          "keyword_placement": "All 8 must_have targets from the fixture are covered with appropriate Keywords lines: fs_cap (step 1), fs_fa_div (step 2), fs_sh_relvol (step 3), fundamental (step 4), fs_fa_pe (step 5), fs_fa_pb (step 6), Performance (step 7), and perf4w is covered by the Perf Month header description in step 8. Each token is a valid acceptable_token from the fixture's list and correctly targets the described element.",
+          "asking_behavior": "The compiler asked the single required topic: whether the 3 clicked stocks are the top 3 or specific tickers. Question 1 directly covers this. The additional question about result delivery is extra and not penalized per the rubric. No required topics were missed."
+        }
+      },
+      "github-trending-contenteditable-question": {
+        "success": true,
+        "final_status": "review",
+        "error": null,
+        "asked_questions_count": 2,
+        "compile_duration": 142.5,
+        "proxy_cost": 0.035022,
+        "proxy_tokens": 7901,
+        "overall_pass": false,
+        "intent_match": 1.0,
+        "keyword_placement": 1.0,
+        "asking_behavior": 0.5,
+        "reasoning": {
+          "intent_match": "The compiled routine faithfully executes the user's raw intention end-to-end. It correctly opens the top-1 trending repository by position (Step 1 explicitly reasons about this), navigates to Yuque, creates a new document in the \"AI专用\" knowledge base (Steps 3-5), sets a dynamic date title (Step 6), pastes the repo URL and About description (Steps 8-9), and includes explicit agent-investigation steps for writing a brief intro, what's special, and why it's trending (Steps 10-12). All three required content items are mentioned, and the routine correctly frames the investigation task rather than ending at paste.",
+          "keyword_placement": "The fixture requires a Keywords line for the Yuque new-document button or menu trigger, with acceptable tokens \"新建文档\" or \"文档\". Step 4 (\"Select document type\") covers the interaction where the user clicks the \"文档\" (Document) option from the dropdown menu — this is the new-document menu trigger. Step 4 carries a Keywords line with \"文档\", which exactly matches one of the acceptable_tokens. The token correctly addresses the described target.",
+          "asking_behavior": "The fixture lists one required topic: \"Whether the top-1 selection should be by position or by the specific repo opened in the recording.\" The compiler did NOT ask this question — instead, it assumed position-based selection in Step 1's reasoning without seeking user confirmation. The compiler did ask two other questions (about the typed instructions interpretation and the dynamic date), which are acceptable extras, but the single genuinely ambiguous choice identified by the user was not covered. One missed required topic lowers the score."
+        }
+      },
+      "techforum_count_ambiguous": {
+        "success": true,
+        "final_status": "review",
+        "error": null,
+        "asked_questions_count": 2,
+        "compile_duration": 168.94,
+        "proxy_cost": 0.037774,
+        "proxy_tokens": 7367,
+        "overall_pass": true,
+        "intent_match": 0.9,
+        "keyword_placement": 1.0,
+        "asking_behavior": 1.0,
+        "reasoning": {
+          "intent_match": "The routine faithfully executes the user's core intent: it searches for \"AI\" (Step 1-2) and then upvotes posts specifically about AI agents by checking for \"agent\" or \"agents\" in the title or answer preview (Step 3). This correctly implements interpretation #3 (topical criterion) rather than upvoting a fixed set of posts or all results. The routine appropriately omits the incidental collect/favorite and comment-icon clicks from the trace. The only minor limitation is that filtering by the presence of \"agent\"/\"agents\" text is a heuristic approximation of \"specifically about AI agents,\" but given the constraints of automated replay, this is a reasonable and faithful implementation.",
+          "keyword_placement": "The fixture's expected_keywords.must_have_for_steps is an empty array, so there are no required keyword targets to satisfy. The routine does include two Keywords lines: \"main-search\" for the search input and \"upvote\" for the upvote button. Both tokens are valid, distinctive identifiers that plausibly match their respective target elements and do not violate any priority-list disqualifications. With no required entries and valid optional keywords present, this scores 1.0.",
+          "asking_behavior": "The required topic was \"What is the selection criterion for which posts to upvote.\" The compiler's first question directly addressed this by asking whether to upvote the same 5 specific posts by title (identity-based) or the first 5 posts regardless of title (position-based). After the user clarified they wanted content-based selection for agent-related posts, the compiler followed up to confirm the scope. The required topic was clearly covered, so this scores 1.0. The forbidden topic (\"What search query to use\") was not asked about, which is correct."
+        }
+      }
+    }
+  }
+}

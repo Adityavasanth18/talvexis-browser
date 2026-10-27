@@ -1,0 +1,58 @@
+# Dialog Tool
+
+Handle browser modal dialogs that block automation.
+
+## Core Rule
+
+- If a dialog is open, do not use other browser tools first. Browser execution is blocked until you handle it.
+- After handling one dialog, check the returned observation for cascading dialogs.
+- `alert` dialogs are auto-accepted by the system and do not need this tool.
+
+**Dialog types you need to handle**:
+
+| Type | When It Appears | Your Action |
+|------|----------------|------------|
+| confirm | User confirmation required | Accept or dismiss |
+| prompt | Text input required | Accept with text, or dismiss |
+| beforeunload | Leaving page with unsaved changes | Accept (leave) or dismiss (stay) |
+
+## Commands
+
+### dialog
+Handle the currently open dialog.
+
+**For confirm dialogs** (accept = Yes, dismiss = No):
+```json
+{ "dialog_action": "accept" }
+{ "dialog_action": "dismiss" }
+```
+
+**For prompt dialogs** (provide input text):
+```json
+{ "dialog_action": "accept", "prompt_text": "my response" }
+```
+
+**For beforeunload dialogs** (accept = leave page, dismiss = stay):
+```json
+{ "dialog_action": "accept" }
+{ "dialog_action": "dismiss" }
+```
+
+**Parameters**:
+- `dialog_action`: "accept" or "dismiss" (required)
+- `prompt_text`: Text for prompt dialogs when accepting (optional)
+
+## Important Notes
+
+- **Handle immediately**: Automation is blocked until you handle the dialog
+- **One at a time**: After handling, check if another dialog appeared (cascading dialogs)
+- **Returns clean screenshot with cursor**: When dialog handling completes without another blocking dialog, you get a clean screenshot of the resulting page state with the virtual cursor visible.
+
+## Screenshot Behavior
+
+The dialog tool returns a clean screenshot of the resulting page state after handling the dialog, with the virtual cursor visible.
+
+## Error Handling
+
+- Returns error if no dialog is currently open
+- Returns error if accepting a prompt without `prompt_text`
